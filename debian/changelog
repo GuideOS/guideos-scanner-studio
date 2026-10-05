@@ -1,0 +1,12 @@
+guideos-scanner-studio (1.0.1) unstable; urgency=medium
+
+  * Versatz beim Scannen behoben.
+
+ -- Nightworker <nightworker@guideos.de>  Mon, 05 Oct 2026 08:22:43 +0200
+
+
+guideos-scanner-studio (1.0.0) unstable; urgency=medium
+
+  * Automatisches Release via GuideOS DEB Suite.
+
+ -- Nightworker <nightworker@guideos.de>  Sun, 04 Oct 2026 08:22:43 +0200
