@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# =======================================================================
+# Titel:     GuideOS Scanner Studio
+# Version:   1.0.1
+# Autor:     Nightworker / Gemini
+# =======================================================================
 import sys
 import json
 import os
@@ -10,8 +15,8 @@ import numpy as np
 import cv2
 from PIL import Image, ImageEnhance
 
-from PyQt6.QtCore import Qt, QRectF
-from PyQt6.QtGui import QPixmap, QImage, QPen, QBrush, QColor
+from PyQt6.QtCore import Qt, QRectF, QPointF
+from PyQt6.QtGui import QPixmap, QImage, QPen, QBrush, QColor, QCursor
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QGroupBox, QFormLayout, QComboBox, QSpinBox, QPushButton,
@@ -29,7 +34,9 @@ DEFAULT_PROFILES = {
         "deskew": True,
         "autocrop": True,
         "brightness": 1.0,
-        "contrast": 1.1
+        "contrast": 1.1,
+        "offset_x": 0.0,
+        "offset_y": 0.0
     },
     "Einzelnes Foto (Autozuschnitt)": {
         "dpi": 600,
@@ -39,7 +46,9 @@ DEFAULT_PROFILES = {
         "deskew": False,
         "autocrop": True,
         "brightness": 1.0,
-        "contrast": 1.0
+        "contrast": 1.0,
+        "offset_x": 0.0,
+        "offset_y": 0.0
     },
     "Mehrere Fotos (300 dpi)": {
         "dpi": 300,
@@ -49,7 +58,9 @@ DEFAULT_PROFILES = {
         "deskew": False,
         "autocrop": True,
         "brightness": 1.0,
-        "contrast": 1.0
+        "contrast": 1.0,
+        "offset_x": 0.0,
+        "offset_y": 0.0
     },
     "Kopie (SW / Schnell)": {
         "dpi": 150,
@@ -59,12 +70,14 @@ DEFAULT_PROFILES = {
         "deskew": True,
         "autocrop": True,
         "brightness": 1.1,
-        "contrast": 1.2
+        "contrast": 1.2,
+        "offset_x": 0.0,
+        "offset_y": 0.0
     }
 }
 
 
-# --- Profil-Verwaltung (Home-Verzeichnis) ---
+# --- Profil-Verwaltung ---
 def get_config_path():
     config_dir = Path.home() / ".config" / "scanner_app"
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -121,7 +134,6 @@ def run_native_ocr_pdf(pil_img, lang="deu+eng"):
 class ImageProcessor:
     @staticmethod
     def deskew(pil_img):
-        """Verbessertes Geraderücken mittels Hough-Transform für reine Dokumente."""
         cv_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
         gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
 
@@ -154,10 +166,6 @@ class ImageProcessor:
 
     @staticmethod
     def extract_photos(pil_img):
-        """
-        Präzise Erkennung, Entzerrung und Zuschnitt von Objekten/Fotos auf der Scanfläche.
-        Skaliert automatisch mit der Pixelauflösung.
-        """
         cv_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
         gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
         h_img, w_img = cv_img.shape[:2]
@@ -233,14 +241,98 @@ class ImageProcessor:
         return pil_img
 
 
-# --- Vorschau & Auswahlrechteck ---
-class SelectionRectItem(QGraphicsRectItem):
+# --- Anfasspunkte (Resize Handles) für das Rechteck ---
+class HandleItem(QGraphicsRectItem):
+    def __init__(self, position_flags, parent=None):
+        super().__init__(-5, -5, 10, 10, parent)
+        self.position_flags = position_flags
+        self.setBrush(QBrush(QColor(0, 120, 215)))
+        self.setPen(QPen(Qt.GlobalColor.white, 1))
+        self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable, False)
+
+        # Passenden Cursor setzen
+        if position_flags in ("top-left", "bottom-right"):
+            self.setCursor(QCursor(Qt.CursorShape.SizeFDiagCursor))
+        elif position_flags in ("top-right", "bottom-left"):
+            self.setCursor(QCursor(Qt.CursorShape.SizeBDiagCursor))
+        elif position_flags in ("top", "bottom"):
+            self.setCursor(QCursor(Qt.CursorShape.SizeVerCursor))
+        elif position_flags in ("left", "right"):
+            self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
+
+
+# --- Anpassbares & Verschiebliches Auswahlrechteck ---
+class ResizableRectItem(QGraphicsRectItem):
     def __init__(self, rect, parent=None):
         super().__init__(rect, parent)
         self.setPen(QPen(QColor(0, 120, 215), 2, Qt.PenStyle.DashLine))
-        self.setBrush(QBrush(QColor(0, 120, 215, 35)))
+        self.setBrush(QBrush(QColor(0, 120, 215, 40)))
+        self.setFlags(
+            QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable |
+            QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable |
+            QGraphicsRectItem.GraphicsItemFlag.ItemSendsGeometryChanges
+        )
+
+        self.handles = {}
+        for flags in ["top-left", "top", "top-right", "right", "bottom-right", "bottom", "bottom-left", "left"]:
+            self.handles[flags] = HandleItem(flags, self)
+
+        self.update_handles()
+        self.active_handle = None
+        self.drag_start_rect = None
+
+    def update_handles(self):
+        r = self.rect()
+        self.handles["top-left"].setPos(r.left(), r.top())
+        self.handles["top"].setPos(r.center().x(), r.top())
+        self.handles["top-right"].setPos(r.right(), r.top())
+        self.handles["right"].setPos(r.right(), r.center().y())
+        self.handles["bottom-right"].setPos(r.right(), r.bottom())
+        self.handles["bottom"].setPos(r.center().x(), r.bottom())
+        self.handles["bottom-left"].setPos(r.left(), r.bottom())
+        self.handles["left"].setPos(r.left(), r.center().y())
+
+    def setRect(self, rect):
+        super().setRect(rect)
+        self.update_handles()
+
+    def mousePressEvent(self, event):
+        item = self.scene().itemAt(event.scenePos(), self.transform())
+        if isinstance(item, HandleItem):
+            self.active_handle = item.position_flags
+            self.drag_start_rect = self.rect()
+            event.accept()
+        else:
+            self.active_handle = None
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.active_handle and self.drag_start_rect:
+            pos = event.pos()
+            r = QRectF(self.drag_start_rect)
+
+            if "left" in self.active_handle:
+                r.setLeft(min(pos.x(), r.right() - 10))
+            if "right" in self.active_handle:
+                r.setRight(max(pos.x(), r.left() + 10))
+            if "top" in self.active_handle:
+                r.setTop(min(pos.y(), r.bottom() - 10))
+            if "bottom" in self.active_handle:
+                r.setBottom(max(pos.y(), r.top() + 10))
+
+            self.setRect(r.normalized())
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+            self.update_handles()
+
+    def mouseReleaseEvent(self, event):
+        self.active_handle = None
+        self.drag_start_rect = None
+        super().mouseReleaseEvent(event)
 
 
+# --- Vorschau View ---
 class PreviewGraphicsView(QGraphicsView):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -264,6 +356,11 @@ class PreviewGraphicsView(QGraphicsView):
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def mousePressEvent(self, event):
+        item = self.itemAt(event.pos())
+        if isinstance(item, HandleItem) or isinstance(item, ResizableRectItem):
+            super().mousePressEvent(event)
+            return
+
         if self.pixmap_item and event.button() == Qt.MouseButton.LeftButton:
             scene_pos = self.mapToScene(event.pos())
             if self.pixmap_item.boundingRect().contains(scene_pos):
@@ -282,7 +379,7 @@ class PreviewGraphicsView(QGraphicsView):
             rect = rect.intersected(self.pixmap_item.boundingRect())
 
             if not self.selection_item:
-                self.selection_item = SelectionRectItem(rect)
+                self.selection_item = ResizableRectItem(rect)
                 self.scene.addItem(self.selection_item)
             else:
                 self.selection_item.setRect(rect)
@@ -297,7 +394,8 @@ class PreviewGraphicsView(QGraphicsView):
 
     def get_selection_rect(self):
         if self.selection_item and self.pixmap_item:
-            rect = self.selection_item.rect()
+            rect = self.selection_item.mapToScene(self.selection_item.rect()).boundingRect()
+            rect = rect.intersected(self.pixmap_item.boundingRect())
             return (int(rect.left()), int(rect.top()), int(rect.right()), int(rect.bottom()))
         return None
 
@@ -306,11 +404,12 @@ class PreviewGraphicsView(QGraphicsView):
 class ScannerApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Modern Scanner Studio Pro")
+        self.setWindowTitle("GuideOS Scanner Studio")
         self.resize(1200, 800)
 
         self.profiles = load_user_profiles()
         self.preview_pil_image = None
+        self.selected_format = "PDF"
 
         self.init_sane()
         self.init_ui()
@@ -372,8 +471,8 @@ class ScannerApp(QMainWindow):
         hw_group.setLayout(hw_layout)
         sidebar_layout.addWidget(hw_group)
 
-        # 3. Post-Processing & OCR
-        proc_group = QGroupBox("Automatische Optimierung & OCR")
+        # 3. Post-Processing, OCR & Manuelles Offset
+        proc_group = QGroupBox("Optimierung, OCR & Kalibrierung")
         proc_layout = QVBoxLayout()
 
         self.chk_deskew = QCheckBox("Geraderücken (Deskew)")
@@ -389,8 +488,23 @@ class ScannerApp(QMainWindow):
         self.spin_contrast.setRange(0.5, 2.0)
         self.spin_contrast.setSingleStep(0.1)
 
+        # Manuelle Offset-Feinjustierung (in mm)
+        self.spin_offset_x = QDoubleSpinBox()
+        self.spin_offset_x.setRange(-50.0, 50.0)
+        self.spin_offset_x.setSingleStep(1.0)
+        self.spin_offset_x.setSuffix(" mm")
+        self.spin_offset_x.setToolTip("Korrektur nach rechts (+) oder links (-)")
+
+        self.spin_offset_y = QDoubleSpinBox()
+        self.spin_offset_y.setRange(-50.0, 50.0)
+        self.spin_offset_y.setSingleStep(1.0)
+        self.spin_offset_y.setSuffix(" mm")
+        self.spin_offset_y.setToolTip("Korrektur nach unten (+) oder oben (-)")
+
         adj_layout.addRow("Helligkeit:", self.spin_brightness)
         adj_layout.addRow("Kontrast:", self.spin_contrast)
+        adj_layout.addRow("Offset X:", self.spin_offset_x)
+        adj_layout.addRow("Offset Y:", self.spin_offset_y)
 
         proc_layout.addWidget(self.chk_deskew)
         proc_layout.addWidget(self.chk_autocrop)
@@ -441,6 +555,9 @@ class ScannerApp(QMainWindow):
             self.chk_autocrop.setChecked(p.get("autocrop", False))
             self.spin_brightness.setValue(p.get("brightness", 1.0))
             self.spin_contrast.setValue(p.get("contrast", 1.0))
+            self.spin_offset_x.setValue(p.get("offset_x", 0.0))
+            self.spin_offset_y.setValue(p.get("offset_y", 0.0))
+            self.selected_format = p.get("format", "PDF")
 
     def save_custom_profile(self):
         name, ok = QInputDialog.getText(self, "Profil speichern", "Name für das neue Profil:")
@@ -448,11 +565,14 @@ class ScannerApp(QMainWindow):
             self.profiles[name] = {
                 "dpi": self.dpi_spin.value(),
                 "mode": self.mode_combo.currentData(),
+                "format": self.selected_format,
                 "ocr": self.chk_ocr.isChecked(),
                 "deskew": self.chk_deskew.isChecked(),
                 "autocrop": self.chk_autocrop.isChecked(),
                 "brightness": self.spin_brightness.value(),
-                "contrast": self.spin_contrast.value()
+                "contrast": self.spin_contrast.value(),
+                "offset_x": self.spin_offset_x.value(),
+                "offset_y": self.spin_offset_y.value()
             }
             save_user_profiles(self.profiles)
 
@@ -477,10 +597,17 @@ class ScannerApp(QMainWindow):
             try:
                 dev.mode = self.mode_combo.currentData()
                 dev.resolution = 75
-                if hasattr(dev, 'tl_x'): dev.tl_x = 0.0
-                if hasattr(dev, 'tl_y'): dev.tl_y = 0.0
-                if hasattr(dev, 'br_x') and hasattr(dev, 'tl_x_range'): dev.br_x = dev.tl_x_range[1]
-                if hasattr(dev, 'br_y') and hasattr(dev, 'tl_y_range'): dev.br_y = dev.tl_y_range[1]
+
+                # Grenzwerte des Treibers genau ermitteln
+                min_x = dev.tl_x_range[0] if hasattr(dev, 'tl_x_range') else 0.0
+                max_x = dev.tl_x_range[1] if hasattr(dev, 'tl_x_range') else 215.9
+                min_y = dev.tl_y_range[0] if hasattr(dev, 'tl_y_range') else 0.0
+                max_y = dev.tl_y_range[1] if hasattr(dev, 'tl_y_range') else 297.0
+
+                if hasattr(dev, 'tl_x'): dev.tl_x = min_x
+                if hasattr(dev, 'tl_y'): dev.tl_y = min_y
+                if hasattr(dev, 'br_x'): dev.br_x = max_x
+                if hasattr(dev, 'br_y'): dev.br_y = max_y
 
                 dev.start()
                 self.preview_pil_image = dev.snap()
@@ -499,19 +626,24 @@ class ScannerApp(QMainWindow):
             QMessageBox.warning(self, "Hinweis", "Bitte starte zuerst einen Vorschau-Scan.")
             return
 
-        # Hinweismeldung bei automatischer Trennung mit > 300 DPI
-        if self.chk_autocrop.isChecked() and self.dpi_spin.value() > 300:
-            QMessageBox.information(
-                self,
-                "Hinweis zur Auto-Erkennung",
-                "Bei Auflösungen über 300 DPI (z. B. 600 DPI) werden mehrere Objekte "
-                "vom System eventuell als ein einzelnes Bild erkannt.\n\n"
-                "Für das automatische Trennen mehrerer Fotos wird das Profil "
-                "'Mehrere Fotos (300 dpi)' empfohlen."
-            )
+        filter_pdf = "PDF Dokument (*.pdf)"
+        filter_jpg = "JPEG Bild (*.jpg)"
+        filter_png = "PNG Bild (*.png)"
 
-        file_filter = "JPEG Bild (*.jpg);;PDF Dokument (*.pdf);;PNG Bild (*.png)"
-        file_path, selected_filter = QFileDialog.getSaveFileName(self, "Scan speichern", "Scan_Output", file_filter)
+        if self.selected_format.upper() == "PDF" or self.chk_ocr.isChecked():
+            file_filter = f"{filter_pdf};;{filter_jpg};;{filter_png}"
+            initial_filter = filter_pdf
+        else:
+            file_filter = f"{filter_jpg};;{filter_pdf};;{filter_png}"
+            initial_filter = filter_jpg
+
+        file_path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Scan speichern",
+            "Scan_Output",
+            file_filter,
+            initialFilter=initial_filter
+        )
 
         if not file_path:
             return
@@ -528,13 +660,31 @@ class ScannerApp(QMainWindow):
                 if selection:
                     x1, y1, x2, y2 = selection
                     w_pixel, h_pixel = self.preview_pil_image.size
-                    max_x = dev.tl_x_range[1] if hasattr(dev, 'tl_x_range') else 215.0
+
+                    # Minima und Maxima in mm
+                    min_x = dev.tl_x_range[0] if hasattr(dev, 'tl_x_range') else 0.0
+                    max_x = dev.tl_x_range[1] if hasattr(dev, 'tl_x_range') else 215.9
+                    min_y = dev.tl_y_range[0] if hasattr(dev, 'tl_y_range') else 0.0
                     max_y = dev.tl_y_range[1] if hasattr(dev, 'tl_y_range') else 297.0
 
-                    dev.tl_x = (x1 / w_pixel) * max_x
-                    dev.tl_y = (y1 / h_pixel) * max_y
-                    dev.br_x = (x2 / w_pixel) * max_x
-                    dev.br_y = (y2 / h_pixel) * max_y
+                    span_x = max_x - min_x
+                    span_y = max_y - min_y
+
+                    # Manuelle Offsets aus dem GUI (in mm)
+                    off_x = self.spin_offset_x.value()
+                    off_y = self.spin_offset_y.value()
+
+                    # Exakte Transformation inklusive Treiber-Limits und manuellem Offset
+                    calc_tl_x = min_x + (x1 / w_pixel) * span_x + off_x
+                    calc_tl_y = min_y + (y1 / h_pixel) * span_y + off_y
+                    calc_br_x = min_x + (x2 / w_pixel) * span_x + off_x
+                    calc_br_y = min_y + (y2 / h_pixel) * span_y + off_y
+
+                    # Absicherung gegen Überschreitung der Treibergrenzen
+                    dev.tl_x = float(max(min_x, min(calc_tl_x, max_x)))
+                    dev.tl_y = float(max(min_y, min(calc_tl_y, max_y)))
+                    dev.br_x = float(max(min_x, min(calc_br_x, max_x)))
+                    dev.br_y = float(max(min_y, min(calc_br_y, max_y)))
 
                 dev.start()
                 scanned_img = dev.snap()
@@ -549,9 +699,9 @@ class ScannerApp(QMainWindow):
                 scanned_img = self.preview_pil_image.copy()
 
         # 2. Bildverarbeitung & Extraktion
-        extracted_images = []
-
-        if self.chk_autocrop.isChecked():
+        if selection or self.chk_ocr.isChecked():
+            extracted_images = [scanned_img]
+        elif self.chk_autocrop.isChecked():
             extracted_images = ImageProcessor.extract_photos(scanned_img)
         else:
             extracted_images = [scanned_img]
@@ -559,7 +709,7 @@ class ScannerApp(QMainWindow):
         # Post-Processing
         final_images = []
         for img in extracted_images:
-            if self.chk_deskew.isChecked() and not self.chk_autocrop.isChecked():
+            if self.chk_deskew.isChecked() and not selection:
                 img = ImageProcessor.deskew(img)
 
             img = ImageProcessor.adjust_brightness_contrast(
@@ -572,7 +722,7 @@ class ScannerApp(QMainWindow):
         # 3. Speichern
         base, ext = os.path.splitext(file_path)
         if not ext:
-            ext = ".jpg" if "JPEG" in selected_filter else ".pdf"
+            ext = ".pdf" if "PDF" in selected_filter else ".jpg"
 
         try:
             for idx, img in enumerate(final_images):
