@@ -1,6 +1,11 @@
 # 📸 GuideOS Scanner Studio
 Eine moderne, PyQt6-basierte Desktop-Anwendung für Linux zur komfortablen Steuerung von Dokumenten- und Fotoscannern über SANE.
 
+<div style="display:flex; gap:10px;">
+  <img src="screenshots/screenshot_1.png" width="200">
+  <img src="screenshots/screenshot_2.png" width="200">
+</div>
+
 Das Tool bietet eine visuelle Vorschau mit manueller Bereichsauswahl, ein flexibles Profilsystem sowie eine automatische Objekterkennung und Entzerrung für Fotos und Dokumente (inkl. OCR-Unterstützung).
 
 ✨ Features
