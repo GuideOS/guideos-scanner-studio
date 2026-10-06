@@ -23,3 +23,11 @@ System-Pakete installieren (Debian / Ubuntu / Linux Mint)
 sudo apt update
 sudo apt install python3 python3-pyqt6 python3-pil python3-sane python3-opencv python3-numpy python3-pypdf sane-utils tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng
 ```
+## 🔧 Installation
+
+### Download des `.deb` Packages, von der **[Releases](https://https://github.com/GuideOS/guideos-scanner-studio/releases)** Section in diesem Repository
+Öffne ein Terminal in deinem Download-Ordner und führe folgenden Befehl aus:
+```bash
+sudo apt update
+sudo apt install guideos-scanner-studio*.deb
+```
