@@ -14,7 +14,10 @@
   <icon type="stock">guideos-scanner</icon>
   <screenshots>
     <screenshot type="default">
-      <image>https://example.com/screenshots/guideos-scanner.png</image>
+      <image>https://github.com/GuideOS/guideos-scanner-studio/blob/main/screenshots/screenshot_1.png?raw=true</image>
+    </screenshot>
+    <screenshot>
+      <image>https://github.com/GuideOS/guideos-scanner-studio/blob/main/screenshots/screenshot_2.png?raw=true</image>
     </screenshot>
   </screenshots>
 </component>
