@@ -5,12 +5,14 @@ Eine moderne, leistungsfähige Open-Source Desktop-Anwendung zur Ansteuerung von
   <img src="screenshots/screenshot_1.png" width="200">
   <img src="screenshots/screenshot_2.png" width="200">
 </div>
----
+
+
+
+
 ![Python](https://img.shields.io/badge/Python-3.8+-3776AB?style=flat&logo=python&logoColor=white)
 ![PyQt6](https://img.shields.io/badge/PyQt6-6.0+-41CD52?style=flat&logo=qt&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux-SCC300?style=flat&logo=linux&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
-
 ---
 
 ## 📄 Funktionen
