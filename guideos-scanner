@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # =======================================================================
 # Titel:     GuideOS Scanner Studio
-# Version:   1.5.0 (Stable Multi-Page & Threaded SANE)
+# Version:   1.0.2 (Stable Multi-Page & Threaded SANE)
 # Autor:     Nightworker / Gemini
 # =======================================================================
 import sys
@@ -838,7 +838,13 @@ class ScannerApp(QMainWindow):
 
         base, ext = os.path.splitext(file_path)
         if not ext:
-            ext = ".pdf" if "PDF" in selected_filter else ".jpg"
+            if "PNG" in selected_filter:
+                ext = ".png"
+            elif "JPEG" in selected_filter or "JPG" in selected_filter:
+                ext = ".jpg"
+            else:
+                ext = ".pdf"
+            file_path = base + ext
 
         try:
             dpi_val = float(self.dpi_spin.value())
@@ -867,7 +873,7 @@ class ScannerApp(QMainWindow):
             # B) Bild-Formate Speichern (Einzeldateien)
             else:
                 for idx, img in enumerate(self.scanned_pages):
-                    out_path = f"{base}_{idx+1}{ext}" if len(self.scanned_pages) > 1 else f"{base}{ext}"
+                    out_path = f"{base}_{idx+1}{ext}" if len(self.scanned_pages) > 1 else file_path
                     if ext.lower() in [".jpg", ".jpeg"]:
                         img.convert("RGB").save(out_path, "JPEG", quality=95)
                     else:
