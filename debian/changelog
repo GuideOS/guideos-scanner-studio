@@ -1,3 +1,17 @@
+guideos-scanner-studio (1.0.4) unstable; urgency=medium
+
+  * Durchlichteinheit optimiert.
+
+ -- Nightworker <nightworker@guideos.de>  Fri, 09 Oct 2026 8:00:00 +0200
+
+
+guideos-scanner-studio (1.0.3) unstable; urgency=medium
+
+  * ADF hinzugefügt.
+
+ -- Nightworker <nightworker@guideos.de>  Wed, 08 Oct 2026 18:00:00 +0200
+
+
 guideos-scanner-studio (1.0.2) unstable; urgency=medium
 
   * Multipage hinzugefügt.

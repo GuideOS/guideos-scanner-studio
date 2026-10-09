@@ -15,17 +15,33 @@ Eine moderne, leistungsfähige Open-Source Desktop-Anwendung zur Ansteuerung von
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
 ---
 
-## 📄 Funktionen
+## GuideOS Scanner Studio
 
-- 🔍 **Live-Vorschau mit dynamischem Auswahlrechteck**: Passe den Scanbereich visuell mit Maus-Anfassern an.
-- 📄 **Durchsuchbare PDFs (Native OCR)**: Automatische Texterkennung via Tesseract direkt beim Erstellen von PDF-Dateien.
-- 📐 **Automatisches Geraderücken (Deskew)**: Erkennt schief aufgelegte Dokumente mittels Hough-Transformation und richtet sie automatisch aus.
-- 🖼️ **Foto-Ausschneide-Automatik (Multi-Crop)**: Scanne mehrere auf dem Glas verteilte Fotos auf einmal – die Software erkennt und speichert jedes Foto einzeln.
-- 🎯 **Manuelle Feinjustierung**: Offset-Korrektur (X/Y-Achse in mm) zur Kalibrierung der Hardware-Abweichungen deines Scanners.
-- ⚙️ **Benutzerdefinierte Profile**: Speichere deine bevorzugten Einstellungen (DPI, Modus, OCR) dauerhaft in deinem Home-Verzeichnis (`~/.config/scanner_app/profiles.json`).
-- 🎨 **Moderne Benutzeroberfläche**: Integrierter Splash-Screen und Dark-Design-Komponenten auf Basis des Qt-Fusion-Styles.
+GuideOS Scanner Studio ist eine schlanke, grafische Python-Anwendung zur Ansteuerung von Flachbett-, Einzugs- (ADF) und Durchlicht-Scannern (Dias/Negative) über die Linux SANE-Schnittstelle. Es wurde speziell für eine zuverlässige Hardware-Interaktion (insbesondere mit netzwerk- und eSCL-basierten Ricoh-Multifunktionsgeräten) entwickelt.
 
----
+Hauptfunktionen & Highlights
+Integrierte Profilverwaltung: Vordefinierte und anpassbare Scanziele (z. B. PDF + OCR, ADF / Stapel, Fotos mit Autozuschnitt, Dias / Negative) inklusive Speicherung benutzerdefinierter Einstellungen.
+
+Spezielle ADF-A4-Geometrie-Fixes: Erzwingt die vollständige DIN A4 Scanfläche bei jeder Einzugsseite, um Bildstauchungen und Treiber-Resets bei Geräten wie Ricoh MFPs zu verhindern.
+
+Automatische Foto-Erkennung & Zuschnitt: Verwendet OpenCV-Konturensuche zur automatischen Erkennung, Entzerrung und Separierung mehrerer auf dem Flachbett liegender Fotos in einzelne Dokumentenseiten.
+
+Integrierte Durchlicht- & Filmverarbeitung: Unterstützt Negativ-Invertierung und verarbeitet Durchlicht-Ausschnitte stabil per Software-Crop.
+
+---   
+### Sicherheits- & Usability-Features:
+
+Automatische Sperre des Vorschau-Buttons bei aktivem ADF-Einzug zur Vermeidung von Hardware-Sperren.
+
+Threading-basierter Systemstart mit Splash-Screen zur unterbrechungsfreien Hardware-Suche.
+
+Unterstützung für native PNG-Button-Pixmaps (/usr/share/pixmaps/) für saubere Integration in Debian/Ubuntu-Pakete (.deb).
+
+Integrierte Tesseract-OCR zur Erstellung durchsuchbarer PDFs.
+
+---   
+**Systemvoraussetzungen:** Linux (Debian/Ubuntu), Python 3, PyQt6, SANE, OpenCV, Pillow, Tesseract OCR, PyPDF
+---     
 
 ## 🔧 Installation für Debian / Ubuntu / Linux Mint:
 

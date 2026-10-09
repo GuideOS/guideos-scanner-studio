@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # =======================================================================
 # Titel:     GuideOS Scanner Studio
-# Version:   1.0.2 (Stable Multi-Page & Threaded SANE)
+# Version:   1.0.3 (ADF Support)
 # Autor:     Nightworker / Gemini
 # =======================================================================
 import sys
@@ -14,9 +14,8 @@ from pathlib import Path
 import sane
 import numpy as np
 import cv2
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageOps
 
-# Versuche pypdf (python3-pypdf via apt) zum Zusammenführen von OCR-PDFs zu importieren
 try:
     from pypdf import PdfWriter, PdfReader
     HAS_PYPDF = True
@@ -24,7 +23,7 @@ except ImportError:
     HAS_PYPDF = False
 
 from PyQt6.QtCore import Qt, QRectF, QThread, pyqtSignal
-from PyQt6.QtGui import QPixmap, QImage, QPen, QBrush, QColor, QCursor, QFont
+from PyQt6.QtGui import QPixmap, QImage, QPen, QBrush, QColor, QCursor, QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QGroupBox, QFormLayout, QComboBox, QSpinBox, QPushButton,
@@ -33,12 +32,27 @@ from PyQt6.QtWidgets import (
     QProgressBar
 )
 
-# Standard-Profile
 DEFAULT_PROFILES = {
     "Dokument (PDF + OCR)": {
         "dpi": 300,
         "mode": "color",
         "format": "PDF",
+        "source": "Flatbed",
+        "invert_negative": False,
+        "ocr": True,
+        "deskew": True,
+        "autocrop": False,
+        "brightness": 1.0,
+        "contrast": 1.1,
+        "offset_x": 0.0,
+        "offset_y": 0.0
+    },
+    "Dokument (ADF / Stapel)": {
+        "dpi": 300,
+        "mode": "color",
+        "format": "PDF",
+        "source": "ADF",
+        "invert_negative": False,
         "ocr": True,
         "deskew": True,
         "autocrop": False,
@@ -51,6 +65,8 @@ DEFAULT_PROFILES = {
         "dpi": 600,
         "mode": "color",
         "format": "JPG",
+        "source": "Flatbed",
+        "invert_negative": False,
         "ocr": False,
         "deskew": False,
         "autocrop": True,
@@ -63,6 +79,8 @@ DEFAULT_PROFILES = {
         "dpi": 300,
         "mode": "color",
         "format": "JPG",
+        "source": "Flatbed",
+        "invert_negative": False,
         "ocr": False,
         "deskew": False,
         "autocrop": True,
@@ -72,21 +90,62 @@ DEFAULT_PROFILES = {
         "offset_y": 0.0
     },
     "Kopie (SW / Schnell)": {
-        "dpi": 150,
+        "dpi": 300,
         "mode": "lineart",
         "format": "PDF",
+        "source": "Flatbed",
+        "invert_negative": False,
         "ocr": False,
         "deskew": True,
         "autocrop": False,
+        "brightness": 1.0,
+        "contrast": 1.2,
+        "offset_x": 0.0,
+        "offset_y": 0.0
+    },
+    "Negativ-Film (Durchlicht)": {
+        "dpi": 1200,
+        "mode": "color",
+        "format": "JPG",
+        "source": "Transparency",
+        "invert_negative": True,
+        "ocr": False,
+        "deskew": False,
+        "autocrop": True,
         "brightness": 1.1,
         "contrast": 1.2,
+        "offset_x": 0.0,
+        "offset_y": 0.0
+    },
+    "Dia / Positiv (Durchlicht)": {
+        "dpi": 1200,
+        "mode": "color",
+        "format": "JPG",
+        "source": "Transparency",
+        "invert_negative": False,
+        "ocr": False,
+        "deskew": False,
+        "autocrop": True,
+        "brightness": 1.0,
+        "contrast": 1.1,
         "offset_x": 0.0,
         "offset_y": 0.0
     }
 }
 
 
-# --- Profil-Verwaltung ---
+def get_pixmap_icon(icon_name):
+    """Sucht nach PNG-Icons zuerst in /usr/share/pixmaps/, dann im lokalen icons/-Ordner."""
+    sys_path = Path("/usr/share/pixmaps") / f"{icon_name}.png"
+    local_path = Path(__file__).parent / "icons" / f"{icon_name}.png"
+
+    if sys_path.exists():
+        return QIcon(str(sys_path))
+    elif local_path.exists():
+        return QIcon(str(local_path))
+    return QIcon()
+
+
 def get_config_path():
     config_dir = Path.home() / ".config" / "scanner_app"
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -113,7 +172,6 @@ def save_user_profiles(profiles):
         print(f"Fehler beim Speichern der Profile: {e}")
 
 
-# --- Worker-Thread für die Hardware-Suche ---
 class SaneInitWorker(QThread):
     finished = pyqtSignal(list)
 
@@ -127,7 +185,6 @@ class SaneInitWorker(QThread):
         self.finished.emit(devices)
 
 
-# --- Splash-Screen als eigenständiger Dialog ---
 class StartSplashScreen(QWidget):
     def __init__(self):
         super().__init__()
@@ -169,7 +226,7 @@ class StartSplashScreen(QWidget):
         self.lbl_status.setStyleSheet("color: #CCCCCC; font-size: 13px;")
 
         self.progress = QProgressBar()
-        self.progress.setRange(0, 0) # Endlose Ladeanimation
+        self.progress.setRange(0, 0)
         self.progress.setFixedHeight(10)
 
         layout.addWidget(self.lbl_title)
@@ -186,7 +243,6 @@ class StartSplashScreen(QWidget):
         self.lbl_status.setText(text)
 
 
-# --- Native OCR-Funktion ---
 def run_native_ocr_pdf(pil_img, lang="deu+eng"):
     with tempfile.TemporaryDirectory() as tmp_dir:
         input_img_path = os.path.join(tmp_dir, "input.png")
@@ -212,8 +268,13 @@ def run_native_ocr_pdf(pil_img, lang="deu+eng"):
             return f.read()
 
 
-# --- Bildverarbeitungs-Helper ---
 class ImageProcessor:
+    @staticmethod
+    def invert_negative(pil_img):
+        if pil_img.mode != "RGB":
+            pil_img = pil_img.convert("RGB")
+        return ImageOps.invert(pil_img)
+
     @staticmethod
     def deskew(pil_img):
         if pil_img.mode != "RGB":
@@ -329,7 +390,6 @@ class ImageProcessor:
         return pil_img
 
 
-# --- Anfasspunkte für Rechteck ---
 class HandleItem(QGraphicsRectItem):
     def __init__(self, position_flags, parent=None):
         super().__init__(-5, -5, 10, 10, parent)
@@ -348,7 +408,6 @@ class HandleItem(QGraphicsRectItem):
             self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
 
 
-# --- ResizableRectItem ---
 class ResizableRectItem(QGraphicsRectItem):
     def __init__(self, rect, parent=None):
         super().__init__(rect, parent)
@@ -419,7 +478,6 @@ class ResizableRectItem(QGraphicsRectItem):
         super().mouseReleaseEvent(event)
 
 
-# --- PreviewGraphicsView ---
 class PreviewGraphicsView(QGraphicsView):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -487,12 +545,11 @@ class PreviewGraphicsView(QGraphicsView):
         return None
 
 
-# --- Hauptfenster ---
 class ScannerApp(QMainWindow):
     def __init__(self, devices):
         super().__init__()
         self.setWindowTitle("GuideOS Scanner Studio")
-        self.resize(1000, 850)
+        self.resize(1020, 850)
 
         self.devices = devices
         self.profiles = load_user_profiles()
@@ -520,7 +577,8 @@ class ScannerApp(QMainWindow):
         self.profile_combo.addItems(self.profiles.keys())
         self.profile_combo.currentTextChanged.connect(self.load_profile)
 
-        btn_save_prof = QPushButton("💾")
+        btn_save_prof = QPushButton()
+        btn_save_prof.setIcon(get_pixmap_icon("guideos-scanner-save"))
         btn_save_prof.setToolTip("Aktuelle Einstellungen speichern")
         btn_save_prof.clicked.connect(self.save_custom_profile)
 
@@ -535,28 +593,34 @@ class ScannerApp(QMainWindow):
         self.device_combo = QComboBox()
         self.populate_devices()
 
+        self.source_combo = QComboBox()
+        self.populate_default_sources()
+        self.source_combo.currentTextChanged.connect(self.on_source_changed)
+
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("Farbe", "color")
         self.mode_combo.addItem("Graustufen", "gray")
         self.mode_combo.addItem("Schwarz/Weiß (Lineart)", "lineart")
 
         self.dpi_spin = QSpinBox()
-        self.dpi_spin.setRange(75, 1200)
-        self.dpi_spin.setSingleStep(75)
+        self.dpi_spin.setRange(75, 4800)
+        self.dpi_spin.setSingleStep(150)
         self.dpi_spin.setSuffix(" DPI")
 
         hw_layout.addRow("Scanner:", self.device_combo)
+        hw_layout.addRow("Quelle:", self.source_combo)
         hw_layout.addRow("Modus:", self.mode_combo)
         hw_layout.addRow("Auflösung:", self.dpi_spin)
         hw_group.setLayout(hw_layout)
         sidebar_layout.addWidget(hw_group)
 
         # 3. Optimierung & OCR
-        proc_group = QGroupBox("Optimierung, OCR & Kalibrierung")
+        proc_group = QGroupBox("Optimierung, OCR & Film")
         proc_layout = QVBoxLayout()
 
+        self.chk_invert = QCheckBox("Negativ invertieren (Negativ -> Positiv)")
         self.chk_deskew = QCheckBox("Geraderücken (Deskew)")
-        self.chk_autocrop = QCheckBox("Foto Auto-Erkennung & Zuschnitt")
+        self.chk_autocrop = QCheckBox("Foto/Film Auto-Erkennung & Zuschnitt")
         self.chk_ocr = QCheckBox("Durchsuchbares PDF (OCR)")
 
         adj_layout = QFormLayout()
@@ -583,6 +647,7 @@ class ScannerApp(QMainWindow):
         adj_layout.addRow("Offset X:", self.spin_offset_x)
         adj_layout.addRow("Offset Y:", self.spin_offset_y)
 
+        proc_layout.addWidget(self.chk_invert)
         proc_layout.addWidget(self.chk_deskew)
         proc_layout.addWidget(self.chk_autocrop)
         proc_layout.addWidget(self.chk_ocr)
@@ -594,38 +659,60 @@ class ScannerApp(QMainWindow):
         scan_group = QGroupBox("Aktionen")
         scan_layout = QVBoxLayout()
 
-        self.btn_preview = QPushButton("🔍 1. Vorschau scannen")
-        self.btn_preview.setStyleSheet("font-weight: bold; padding: 6px;")
+        # Gemeinsames Stylesheet für alle Buttons für linksbündigen Inhalt mit Einrückung
+        button_style = """
+            QPushButton {
+                text-align: left;
+                padding-left: 25px;
+                padding-top: 6px;
+                padding-bottom: 6px;
+            }
+        """
+
+        self.btn_preview = QPushButton(" 1. Vorschau scannen")
+        self.btn_preview.setIcon(get_pixmap_icon("guideos-scanner-preview"))
+        self.btn_preview.setStyleSheet(button_style + "font-weight: bold;")
         self.btn_preview.clicked.connect(self.scan_preview)
 
-        self.btn_add_page = QPushButton("➕ 2. Seite erfassen")
-        self.btn_add_page.setStyleSheet("font-weight: bold; background-color: #0078D7; color: white; padding: 10px;")
-        self.btn_add_page.clicked.connect(self.scan_and_add_page)
+        self.btn_add_page = QPushButton(" 2. Seite / Stapel erfassen")
+        self.btn_add_page.setIcon(get_pixmap_icon("guideos-scanner-add"))
+        self.btn_add_page.setStyleSheet(
+            button_style + "font-weight: bold; background-color: #0078D7; color: white; padding-top: 10px; padding-bottom: 10px;"
+        )
+        self.btn_add_page.clicked.connect(self.start_scan_process)
 
         self.lbl_page_count = QLabel("Gescannte Seiten: 0")
-        self.lbl_page_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_page_count.setStyleSheet("font-weight: bold; color: #333;")
+        self.lbl_page_count.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.lbl_page_count.setStyleSheet("font-weight: bold; color: #333; padding-left: 45px;")
 
-        self.btn_save_document = QPushButton("💾 3. Dokument speichern")
-        self.btn_save_document.setStyleSheet("font-weight: bold; background-color: #107C41; color: white; padding: 10px;")
+        self.btn_save_document = QPushButton(" 3. Dokument speichern")
+        self.btn_save_document.setIcon(get_pixmap_icon("guideos-scanner-save"))
+        self.btn_save_document.setStyleSheet(
+            button_style + "font-weight: bold; background-color: #107C41; color: white; padding-top: 10px; padding-bottom: 10px;"
+        )
         self.btn_save_document.clicked.connect(self.save_final_document)
 
-        self.btn_reset_pages = QPushButton("🧹 Liste zurücksetzen")
+        self.btn_reset_pages = QPushButton(" Liste zurücksetzen")
+        self.btn_reset_pages.setIcon(get_pixmap_icon("guideos-scanner-reset"))
+        self.btn_reset_pages.setStyleSheet(button_style)
         self.btn_reset_pages.clicked.connect(self.reset_pages)
 
-        # Beenden Button
-        self.btn_quit = QPushButton("❌ Beenden")
-        self.btn_quit.setStyleSheet("""
-            QPushButton {
-                background-color: #D13438;
-                color: white;
-                font-weight: bold;
-                padding: 8px;
-            }
-            QPushButton:hover {
-                background-color: #A80000;
-            }
-        """)
+        self.btn_quit = QPushButton(" Beenden")
+        self.btn_quit.setIcon(get_pixmap_icon("guideos-scanner-quit"))
+        self.btn_quit.setStyleSheet(
+            button_style + """
+                QPushButton {
+                    background-color: #D13438;
+                    color: white;
+                    font-weight: bold;
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                }
+                QPushButton:hover {
+                    background-color: #A80000;
+                }
+            """
+        )
         self.btn_quit.clicked.connect(self.quit_application)
 
         scan_layout.addWidget(self.btn_preview)
@@ -656,14 +743,37 @@ class ScannerApp(QMainWindow):
         else:
             self.device_combo.addItem("Demo / Kein Scanner gefunden", None)
 
+    def populate_default_sources(self):
+        self.source_combo.clear()
+        self.source_combo.addItem("Flachbett", "Flatbed")
+        self.source_combo.addItem("Einzug (ADF)", "ADF")
+        self.source_combo.addItem("Durchlichteinheit (TPU)", "Transparency")
+
+    def on_source_changed(self):
+        src = str(self.source_combo.currentData() or self.source_combo.currentText()).upper()
+        if "ADF" in src or "FEEDER" in src:
+            self.btn_preview.setEnabled(False)
+            self.btn_preview.setToolTip("Vorschau ist bei ADF-Einzug deaktiviert.")
+        else:
+            self.btn_preview.setEnabled(True)
+            self.btn_preview.setToolTip("")
+
     def load_profile(self, profile_name):
         if profile_name in self.profiles:
             p = self.profiles[profile_name]
             self.dpi_spin.setValue(p.get("dpi", 300))
 
-            idx = self.mode_combo.findData(p.get("mode", "color"))
-            if idx >= 0: self.mode_combo.setCurrentIndex(idx)
+            idx_mode = self.mode_combo.findData(p.get("mode", "color"))
+            if idx_mode >= 0: self.mode_combo.setCurrentIndex(idx_mode)
 
+            src_val = p.get("source", "Flatbed")
+            idx_src = self.source_combo.findData(src_val)
+            if idx_src >= 0:
+                self.source_combo.setCurrentIndex(idx_src)
+            else:
+                self.source_combo.setCurrentText(src_val)
+
+            self.chk_invert.setChecked(p.get("invert_negative", False))
             self.chk_ocr.setChecked(p.get("ocr", False))
             self.chk_deskew.setChecked(p.get("deskew", False))
             self.chk_autocrop.setChecked(p.get("autocrop", False))
@@ -672,6 +782,7 @@ class ScannerApp(QMainWindow):
             self.spin_offset_x.setValue(p.get("offset_x", 0.0))
             self.spin_offset_y.setValue(p.get("offset_y", 0.0))
             self.selected_format = p.get("format", "PDF")
+            self.on_source_changed()
 
     def save_custom_profile(self):
         name, ok = QInputDialog.getText(self, "Profil speichern", "Name für das neue Profil:")
@@ -679,6 +790,8 @@ class ScannerApp(QMainWindow):
             self.profiles[name] = {
                 "dpi": self.dpi_spin.value(),
                 "mode": self.mode_combo.currentData(),
+                "source": self.source_combo.currentData() or self.source_combo.currentText(),
+                "invert_negative": self.chk_invert.isChecked(),
                 "format": self.selected_format,
                 "ocr": self.chk_ocr.isChecked(),
                 "deskew": self.chk_deskew.isChecked(),
@@ -705,99 +818,242 @@ class ScannerApp(QMainWindow):
             QMessageBox.critical(self, "Fehler", f"Scanner konnte nicht geöffnet werden:\n{e}")
             return None
 
+    def apply_sane_options(self, dev):
+        try:
+            dev.mode = self.mode_combo.currentData()
+        except Exception:
+            pass
+
+        selected_source = str(self.source_combo.currentData() or self.source_combo.currentText())
+        if hasattr(dev, 'source'):
+            try:
+                dev.source = selected_source
+            except Exception as e:
+                print(f"Hinweis beim Setzen der Scan-Quelle: {e}")
+
     def scan_preview(self):
         dev = self.open_sane_device()
         if dev:
             try:
-                dev.mode = self.mode_combo.currentData()
-                dev.resolution = 75
+                self.apply_sane_options(dev)
 
-                min_x = dev.tl_x_range[0] if hasattr(dev, 'tl_x_range') else 0.0
-                max_x = dev.tl_x_range[1] if hasattr(dev, 'tl_x_range') else 215.9
-                min_y = dev.tl_y_range[0] if hasattr(dev, 'tl_y_range') else 0.0
-                max_y = dev.tl_y_range[1] if hasattr(dev, 'tl_y_range') else 297.0
+                dev_name = str(self.device_combo.currentData() or "")
+                is_escl = "escl" in dev_name.lower()
 
-                if hasattr(dev, 'tl_x'): dev.tl_x = min_x
-                if hasattr(dev, 'tl_y'): dev.tl_y = min_y
-                if hasattr(dev, 'br_x'): dev.br_x = max_x
-                if hasattr(dev, 'br_y'): dev.br_y = max_y
+                try:
+                    dev.resolution = 75
+                except Exception:
+                    pass
+
+                if not is_escl:
+                    try:
+                        if hasattr(dev, 'tl_x_range') and hasattr(dev, 'tl_y_range'):
+                            dev.tl_x = dev.tl_x_range[0]
+                            dev.tl_y = dev.tl_y_range[0]
+                            dev.br_x = dev.tl_x_range[1]
+                            dev.br_y = dev.tl_y_range[1]
+                    except Exception as ex:
+                        print(f"Hinweis Vorschau-Grenzen: {ex}")
 
                 dev.start()
                 self.preview_pil_image = dev.snap()
-                dev.close()
             except Exception as e:
                 QMessageBox.warning(self, "Scan-Fehler", f"Vorschau fehlgeschlagen:\n{e}")
                 return
+            finally:
+                try:
+                    dev.close()
+                except Exception:
+                    pass
         else:
             self.preview_pil_image = Image.new("RGB", (1240, 1754), color=(255, 255, 255))
             QMessageBox.information(self, "Demo-Modus", "Demo-Vorschau geladen.")
 
+        if self.chk_invert.isChecked():
+            self.preview_pil_image = ImageProcessor.invert_negative(self.preview_pil_image)
+
         self.preview_view.set_image(self.preview_pil_image)
 
-    def scan_and_add_page(self):
-        if not self.preview_pil_image:
-            QMessageBox.warning(self, "Hinweis", "Bitte starte zuerst einen Vorschau-Scan.")
+    def start_scan_process(self):
+        src = str(self.source_combo.currentData() or self.source_combo.currentText()).upper()
+
+        if "ADF" in src or "FEEDER" in src:
+            self.scan_adf()
+        else:
+            self.scan_single_page()
+
+    def scan_adf(self):
+        dev = self.open_sane_device()
+        if not dev:
+            QMessageBox.information(self, "Demo-Modus", "Simuliere ADF Scan (1 Seite)...")
+            img = self.preview_pil_image.copy() if self.preview_pil_image else Image.new("RGB", (1240, 1754), (255, 255, 255))
+            self.process_and_add_image(img, force_deskew=True)
             return
 
+        pages_scanned = 0
+        try:
+            self.apply_sane_options(dev)
+            dev.resolution = self.dpi_spin.value()
+
+            while True:
+                try:
+                    if hasattr(dev, 'br_x') and hasattr(dev, 'br_y'):
+                        dev.tl_x = 0.0
+                        dev.tl_y = 0.0
+
+                        max_x = dev.br_x_range[1] if hasattr(dev, 'br_x_range') else 210.0
+                        max_y = dev.br_y_range[1] if hasattr(dev, 'br_y_range') else 297.0
+
+                        dev.br_x = max_x
+                        dev.br_y = max_y
+
+                    dev.start()
+                    scanned_img = dev.snap()
+
+                    if scanned_img is not None and scanned_img.width > 0 and scanned_img.height > 0:
+                        self.process_and_add_image(scanned_img, force_deskew=True)
+                        pages_scanned += 1
+                    else:
+                        break
+
+                except (sane._sane.error, EOFError, RuntimeError, Exception) as e:
+                    print(f"ADF Ende / Puffer geleert: {e}")
+                    break
+
+            try:
+                dev.close()
+            except Exception:
+                pass
+
+            if pages_scanned > 0:
+                QMessageBox.information(
+                    self, "ADF Fertig",
+                    f"Alle {pages_scanned} Seite(n) erfolgreich erfasst!"
+                )
+            else:
+                QMessageBox.warning(
+                    self, "ADF Leer",
+                    "Keine Seiten erfasst. Bitte prüfe den Papiereinzug."
+                )
+
+        except Exception as e:
+            QMessageBox.critical(self, "ADF-Fehler", f"Fehler beim ADF-Scan:\n{e}")
+        finally:
+            try:
+                dev.close()
+            except Exception:
+                pass
+
+    def scan_single_page(self):
         selection = self.preview_view.get_selection_rect()
         dev = self.open_sane_device()
 
         if dev:
             try:
-                dev.mode = self.mode_combo.currentData()
+                self.apply_sane_options(dev)
                 dev.resolution = self.dpi_spin.value()
 
-                if selection:
-                    x1, y1, x2, y2 = selection
-                    w_pixel, h_pixel = self.preview_pil_image.size
+                dev_name = str(self.device_combo.currentData() or "")
+                is_escl = "escl" in dev_name.lower()
+                selected_source = str(self.source_combo.currentData() or self.source_combo.currentText()).upper()
+                is_transparency = "TRANSPARENCY" in selected_source or "TPU" in selected_source
 
-                    min_x = dev.tl_x_range[0] if hasattr(dev, 'tl_x_range') else 0.0
-                    max_x = dev.tl_x_range[1] if hasattr(dev, 'tl_x_range') else 215.9
-                    min_y = dev.tl_y_range[0] if hasattr(dev, 'tl_y_range') else 0.0
-                    max_y = dev.tl_y_range[1] if hasattr(dev, 'tl_y_range') else 297.0
+                # Nur Hardware-Bereich setzen, wenn es kein eSCL UND kein Durchlicht (TPU) ist
+                if selection and not is_escl and not is_transparency and self.preview_pil_image:
+                    try:
+                        x1, y1, x2, y2 = selection
+                        w_pixel, h_pixel = self.preview_pil_image.size
 
-                    span_x = max_x - min_x
-                    span_y = max_y - min_y
+                        min_x = dev.tl_x_range[0] if hasattr(dev, 'tl_x_range') else 0.0
+                        max_x = dev.tl_x_range[1] if hasattr(dev, 'tl_x_range') else 215.9
+                        min_y = dev.tl_y_range[0] if hasattr(dev, 'tl_y_range') else 0.0
+                        max_y = dev.tl_y_range[1] if hasattr(dev, 'tl_y_range') else 297.0
 
-                    off_x = self.spin_offset_x.value()
-                    off_y = self.spin_offset_y.value()
+                        span_x = max_x - min_x
+                        span_y = max_y - min_y
 
-                    calc_tl_x = min_x + (x1 / w_pixel) * span_x + off_x
-                    calc_tl_y = min_y + (y1 / h_pixel) * span_y + off_y
-                    calc_br_x = min_x + (x2 / w_pixel) * span_x + off_x
-                    calc_br_y = min_y + (y2 / h_pixel) * span_y + off_y
+                        off_x = self.spin_offset_x.value()
+                        off_y = self.spin_offset_y.value()
 
-                    dev.tl_x = float(max(min_x, min(calc_tl_x, max_x)))
-                    dev.tl_y = float(max(min_y, min(calc_tl_y, max_y)))
-                    dev.br_x = float(max(min_x, min(calc_br_x, max_x)))
-                    dev.br_y = float(max(min_y, min(calc_br_y, max_y)))
+                        calc_tl_x = min_x + (x1 / w_pixel) * span_x + off_x
+                        calc_tl_y = min_y + (y1 / h_pixel) * span_y + off_y
+                        calc_br_x = min_x + (x2 / w_pixel) * span_x + off_x
+                        calc_br_y = min_y + (y2 / h_pixel) * span_y + off_y
+
+                        dev.tl_x = float(max(min_x, min(calc_tl_x, max_x)))
+                        dev.tl_y = float(max(min_y, min(calc_tl_y, max_y)))
+                        dev.br_x = float(max(min_x, min(calc_br_x, max_x)))
+                        dev.br_y = float(max(min_y, min(calc_br_y, max_y)))
+                    except Exception as ex:
+                        print(f"Hinweis Auswahl-Grenzen: {ex}")
+                else:
+                    # Bei Durchlicht oder eSCL: Volle Fläche anfordern
+                    try:
+                        if hasattr(dev, 'tl_x_range') and hasattr(dev, 'tl_y_range'):
+                            dev.tl_x = dev.tl_x_range[0]
+                            dev.tl_y = dev.tl_y_range[0]
+                            dev.br_x = dev.tl_x_range[1]
+                            dev.br_y = dev.tl_y_range[1]
+                    except Exception as ex:
+                        print(f"Hinweis Volles Fenster: {ex}")
 
                 dev.start()
                 scanned_img = dev.snap()
-                dev.close()
+
+                # Bei eSCL ODER Durchlichteinheit den Auswahlrahmen per Software zuschneiden
+                if selection and (is_escl or is_transparency) and self.preview_pil_image:
+                    x1, y1, x2, y2 = selection
+                    w_prev, h_prev = self.preview_pil_image.size
+                    w_scan, h_scan = scanned_img.size
+
+                    # Umrechnung der Vorschau-Koordinaten auf die volle Scan-Auflösung
+                    crop_x1 = int((x1 / w_prev) * w_scan)
+                    crop_y1 = int((y1 / h_prev) * h_scan)
+                    crop_x2 = int((x2 / w_prev) * w_scan)
+                    crop_y2 = int((y2 / h_prev) * h_scan)
+
+                    scanned_img = scanned_img.crop((crop_x1, crop_y1, crop_x2, crop_y2))
+
             except Exception as e:
                 QMessageBox.critical(self, "Scan-Fehler", f"Scan fehlgeschlagen:\n{e}")
                 return
+            finally:
+                try:
+                    dev.close()
+                except Exception:
+                    pass
         else:
-            if selection:
+            if selection and self.preview_pil_image:
                 scanned_img = self.preview_pil_image.crop(selection)
-            else:
+            elif self.preview_pil_image:
                 scanned_img = self.preview_pil_image.copy()
+            else:
+                scanned_img = Image.new("RGB", (2480, 3508), (255, 255, 255))
 
-        # Erzwinge einheitliches RGB-Format (verhindert Abstürze bei Modus-Wechsel)
+        pages_before = len(self.scanned_pages)
+        self.process_and_add_image(scanned_img, is_cropped=bool(selection))
+        added_count = len(self.scanned_pages) - pages_before
+
+        QMessageBox.information(
+            self, "Erfassung erfolgreich",
+            f"Es wurde(n) {added_count} Foto(s)/Seite(n) erfasst!\n"
+            f"Gesamtanzahl im Speicher: {len(self.scanned_pages)}"
+        )
+
+    def process_and_add_image(self, scanned_img, is_cropped=False, force_deskew=False):
         if scanned_img.mode != "RGB":
             scanned_img = scanned_img.convert("RGB")
 
-        # Bildverarbeitung
-        if selection or self.chk_ocr.isChecked():
-            extracted_images = [scanned_img]
-        elif self.chk_autocrop.isChecked():
+        if self.chk_invert.isChecked():
+            scanned_img = ImageProcessor.invert_negative(scanned_img)
+
+        if self.chk_autocrop.isChecked() and not is_cropped:
             extracted_images = ImageProcessor.extract_photos(scanned_img)
         else:
             extracted_images = [scanned_img]
 
         for img in extracted_images:
-            if self.chk_deskew.isChecked() and not selection:
+            if (self.chk_deskew.isChecked() and not is_cropped) or force_deskew:
                 img = ImageProcessor.deskew(img)
 
             img = ImageProcessor.adjust_brightness_contrast(
@@ -808,10 +1064,6 @@ class ScannerApp(QMainWindow):
             self.scanned_pages.append(img)
 
         self.lbl_page_count.setText(f"Gescannte Seiten: {len(self.scanned_pages)}")
-        QMessageBox.information(
-            self, "Seite erfasst",
-            f"Seite {len(self.scanned_pages)} wurde erfolgreich hinzugefügt.\n\nLegst du eine weitere Seite ein, klicke auf 'Vorschau' & 'Seite erfassen'.\nWenn du fertig bist, klicke auf 'Dokument speichern'."
-        )
 
     def save_final_document(self):
         if not self.scanned_pages:
@@ -847,9 +1099,8 @@ class ScannerApp(QMainWindow):
             file_path = base + ext
 
         try:
-            dpi_val = float(self.dpi_spin.value())
+            dpi_val = (float(self.dpi_spin.value()), float(self.dpi_spin.value()))
 
-            # A) PDF Speichern (Mehrseitig)
             if ext.lower() == ".pdf":
                 if self.chk_ocr.isChecked():
                     if HAS_PYPDF:
@@ -862,24 +1113,33 @@ class ScannerApp(QMainWindow):
                             writer.write(f)
                     else:
                         QMessageBox.warning(self, "pypdf fehlt", "Für mehrseitiges OCR-PDF wird 'python3-pypdf' benötigt.\nErstelle normales PDF ohne OCR.")
-                        first_img = self.scanned_pages[0].convert("RGB")
-                        other_imgs = [img.convert("RGB") for img in self.scanned_pages[1:]]
-                        first_img.save(file_path, "PDF", resolution=dpi_val, save_all=True, append_images=other_imgs)
+                        formatted_pages = [img.convert("RGB") for img in self.scanned_pages]
+                        formatted_pages[0].save(
+                            file_path, "PDF",
+                            resolution=dpi_val[0],
+                            dpi=dpi_val,
+                            save_all=True,
+                            append_images=formatted_pages[1:]
+                        )
                 else:
-                    first_img = self.scanned_pages[0].convert("RGB")
-                    other_imgs = [img.convert("RGB") for img in self.scanned_pages[1:]]
-                    first_img.save(file_path, "PDF", resolution=dpi_val, save_all=True, append_images=other_imgs)
+                    formatted_pages = [img.convert("RGB") for img in self.scanned_pages]
+                    formatted_pages[0].save(
+                        file_path, "PDF",
+                        resolution=dpi_val[0],
+                        dpi=dpi_val,
+                        save_all=True,
+                        append_images=formatted_pages[1:]
+                    )
 
-            # B) Bild-Formate Speichern (Einzeldateien)
             else:
                 for idx, img in enumerate(self.scanned_pages):
                     out_path = f"{base}_{idx+1}{ext}" if len(self.scanned_pages) > 1 else file_path
                     if ext.lower() in [".jpg", ".jpeg"]:
-                        img.convert("RGB").save(out_path, "JPEG", quality=95)
+                        img.convert("RGB").save(out_path, "JPEG", quality=95, dpi=dpi_val)
                     else:
-                        img.save(out_path)
+                        img.save(out_path, dpi=dpi_val)
 
-            QMessageBox.information(self, "Erfolg", f"{len(self.scanned_pages)} Seite(n) erfolgreich gespeichert!")
+            QMessageBox.information(self, "Erfolg", f"{len(self.scanned_pages)} Datei(en) erfolgreich gespeichert!")
             self.reset_pages()
 
         except Exception as e:
@@ -887,6 +1147,8 @@ class ScannerApp(QMainWindow):
 
     def reset_pages(self):
         self.scanned_pages.clear()
+        self.preview_pil_image = None
+        self.preview_view.scene.clear()
         self.lbl_page_count.setText("Gescannte Seiten: 0")
 
     def quit_application(self):
@@ -933,18 +1195,15 @@ class ScannerApp(QMainWindow):
             event.accept()
 
 
-# --- Haupt-Ablauf ---
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
-    # 1. Splash-Screen sofort öffnen
     splash = StartSplashScreen()
     splash.show()
 
     main_window = None
 
-    # Callback nach Hardware-Suche
     def on_sane_finished(devices):
         global main_window
         splash.set_status("Erstelle Benutzeroberfläche...")
@@ -952,7 +1211,6 @@ if __name__ == "__main__":
         main_window.show()
         splash.close()
 
-    # 2. Hardware-Suche in separatem Thread
     worker = SaneInitWorker()
     worker.finished.connect(on_sane_finished)
     worker.start()
