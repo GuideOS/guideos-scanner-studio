@@ -15,8 +15,6 @@ Eine moderne, leistungsfähige Open-Source Desktop-Anwendung zur Ansteuerung von
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
 ---
 
-## GuideOS Scanner Studio
-
 GuideOS Scanner Studio ist eine schlanke, grafische Python-Anwendung zur Ansteuerung von Flachbett-, Einzugs- (ADF) und Durchlicht-Scannern (Dias/Negative) über die Linux SANE-Schnittstelle. Es wurde speziell für eine zuverlässige Hardware-Interaktion (insbesondere mit netzwerk- und eSCL-basierten Ricoh-Multifunktionsgeräten) entwickelt.
 
 Hauptfunktionen & Highlights
