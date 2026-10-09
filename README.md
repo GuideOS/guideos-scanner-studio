@@ -20,7 +20,7 @@ GuideOS Scanner Studio ist eine schlanke, grafische Python-Anwendung zur Ansteue
 Hauptfunktionen & Highlights
 Integrierte Profilverwaltung: Vordefinierte und anpassbare Scanziele (z. B. PDF + OCR, ADF / Stapel, Fotos mit Autozuschnitt, Dias / Negative) inklusive Speicherung benutzerdefinierter Einstellungen.
 
-Spezielle ADF-A4-Geometrie-Fixes: Erzwingt die vollständige DIN A4 Scanfläche bei jeder Einzugsseite, um Bildstauchungen und Treiber-Resets bei Geräten wie Ricoh MFPs zu verhindern.
+Spezielle ADF-A4-Geometrie-Fixes: Erzwingt die vollständige DIN A4 Scanfläche bei jeder Einzugsseite, um Bildstauchungen und Treiber-Resets zu verhindern.
 
 Automatische Foto-Erkennung & Zuschnitt: Verwendet OpenCV-Konturensuche zur automatischen Erkennung, Entzerrung und Separierung mehrerer auf dem Flachbett liegender Fotos in einzelne Dokumentenseiten.
 
